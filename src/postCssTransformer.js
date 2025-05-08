@@ -1,11 +1,12 @@
 import postcss from "postcss"
 import postcssModules from "postcss-modules"
-import {replaceFormat, normalizeClassName} from "./functions"
+import {replaceFormat, normalizeClassName} from "./functions.js"
 
 const DEFAULT_SCOPED_NAME = "[local]_[hash:hex:6]"
 
 /**
  * @typedef {object} postCssLoaderOptions
+ * @property {object} map
  * @property {object[]} postCssPlugins
  * @property {string} classNamePrefix
  * @property {string} scopedName
@@ -14,7 +15,7 @@ const DEFAULT_SCOPED_NAME = "[local]_[hash:hex:6]"
 /**
  * @typedef {object} postCssLoaderProps
  * @property {postCssLoaderOptions} options
- * @property {string} fiePath
+ * @property {string} filePath
  * @property {string} code
  */
 
@@ -23,13 +24,13 @@ const DEFAULT_SCOPED_NAME = "[local]_[hash:hex:6]"
  * @param {postCssLoaderProps}
  * @returns
  */
-const postCssLoader = async ({code, fiePath, options}) => {
-  const {scopedName = DEFAULT_SCOPED_NAME, postCssPlugins = [], classNamePrefix = ""} = options
+const postCssLoader = async ({code, filePath, targetPath, options}) => {
+  const {scopedName = DEFAULT_SCOPED_NAME, postCssPlugins = [], classNamePrefix = "", map} = options
 
   const modulesExported = {}
 
-  const isGlobalStyle = /\.global\.(css|scss|sass|less|stylus)$/.test(fiePath)
-  const isInNodeModules = /[\\/]node_modules[\\/]/.test(fiePath)
+  const isGlobalStyle = /\.global\.(css|scss|sass|less|stylus)$/.test(filePath)
+  const isInNodeModules = /[\\/]node_modules[\\/]/.test(filePath)
 
   const postCssPluginsWithCssModules = [
     postcssModules({
@@ -47,9 +48,9 @@ const postCssLoader = async ({code, fiePath, options}) => {
   ]
 
   const postcssOptions = {
-    from: fiePath,
-    to: fiePath,
-    map: false,
+    from: filePath,
+    to: targetPath,
+    map: map,
   }
 
   const result = await postcss(postCssPluginsWithCssModules).process(code, postcssOptions)
@@ -67,12 +68,15 @@ const postCssLoader = async ({code, fiePath, options}) => {
     console.warn(`WARNING: ${warning.plugin}:`, warning.text)
   }
 
+  const moduleCode = `export default ${JSON.stringify(modulesExported[filePath])};`
+
   return {
-    code: `export default ${JSON.stringify(modulesExported[fiePath])};`,
+    code: moduleCode,
     dependencies,
     extracted: {
-      id: fiePath,
-      code: result.css,
+      id: filePath,
+      css: result.css,
+      map: result.map,
     },
   }
 }

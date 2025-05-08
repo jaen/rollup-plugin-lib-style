@@ -1,4 +1,5 @@
-import {PluginImpl, RollupWarning} from "rollup"
+import { type PluginImpl, type WarningHandlerWithDefault } from "rollup"
+import { type SourceMapOptions as PostCssSourceMapOptions } from "postcss";
 
 declare interface ProcessArgs {
   code: string
@@ -6,15 +7,16 @@ declare interface ProcessArgs {
   options?: any
 }
 
-declare interface SassOptions {
-  loadPaths?: string[]
-  [key: string]: any
-}
-
 declare interface Loader {
   name: string
   regex: string
   process: (arg: ProcessArgs) => string
+}
+
+declare interface SourceMapOptions {
+  inline?: PostCssSourceMapOptions["inline"],
+  sourcesContent?: PostCssSourceMapOptions["sourcesContent"],
+  annotation?: PostCssSourceMapOptions["annotation"],
 }
 
 declare interface Options {
@@ -25,14 +27,12 @@ declare interface Options {
   postCssPlugins?: object[]
   classNamePrefix?: string
   scopedName?: string
-  customPath?: string
   customCSSPath?: (id: string) => string
-  customCSSInjectedPath?: (id: string) => string
-  sassOptions?: SassOptions
+  sourceMap?: boolean | SourceMapOptions
 }
 
-declare const onwarn: (warning: RollupWarning, defaultHandler: (warning: string | RollupWarning) => void) => void
+declare const onwarn: WarningHandlerWithDefault;
 
 declare const libStylePlugin: PluginImpl<Options>
 
-export {onwarn, libStylePlugin}
+export { onwarn, libStylePlugin }

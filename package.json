@@ -9,9 +9,12 @@
     "types/index.d.ts"
   ],
   "scripts": {
-    "build": "rollup --input src/index.js --file lib/index.es.js --format es && rollup --input src/index.js --file lib/index.js --format cjs",
+    "build": "npm run build:esm && npm run build:cjs",
+    "build:esm": "rollup --input src/index.js --file lib/index.es.js --format es --config",
+    "build:cjs": "rollup --input src/index.js --file lib/index.js --format cjs --config",
     "prepublishOnly": "npm run build && npm run test",
     "prepack": "npm run build",
+    "prepare": "npm run build",
     "postpublish": "git push && git push --tags",
     "publish:beta": "npm version prerelease --preid=beta -m \"beta version - %s\" && npm publish --tag beta",
     "publish:patch": "npm version patch -m \"patch version - %s\" && npm publish",
@@ -45,6 +48,9 @@
     "@babel/core": "^7.20.5",
     "@babel/eslint-parser": "^7.19.1",
     "@babel/preset-env": "^7.20.2",
+    "@babel/preset-typescript": "^7.27.1",
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-node-resolve": "^16.0.1",
     "@types/jest": "^29.2.3",
     "babel-core": "^6.26.3",
     "babel-jest": "^29.3.1",
@@ -61,6 +67,7 @@
   },
   "dependencies": {
     "fs-extra": "^11.1.0",
+    "glob": "7.2.3",
     "postcss": "8.4.39",
     "postcss-modules": "4.0.0",
     "rollup-pluginutils": "2.8.2",

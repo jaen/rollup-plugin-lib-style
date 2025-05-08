@@ -1,11 +1,10 @@
 import {createFilter} from "rollup-pluginutils"
-import postCssTransformer from "./postCssTransformer"
-import fs from "fs-extra"
-import sass from "sass"
-import glob from "glob"
+import postCssTransformer from "./postCssTransformer.js"
+import Path from "node:path"
+
+import {mm} from "./sourcemap.ts";
 
 const PLUGIN_NAME = "rollup-plugin-lib-style"
-const MAGIC_PATH_REGEX = /@@_MAGIC_PATH_@@/g
 const MAGIC_PATH = "@@_MAGIC_PATH_@@"
 
 const modulesIds = new Set()
@@ -14,31 +13,27 @@ const outputPaths = []
 
 const defaultLoaders = [
   {
-    name: "sass",
-    regex: /\.(sass|scss)$/,
-    process: ({filePath, options}) => ({
-      code: sass.compile(filePath, options?.sassOptions || {}).css.toString(),
-    }),
-  },
-  {
     name: "css",
     regex: /\.(css)$/,
     process: ({code}) => ({code}),
   },
 ]
 
-const replaceMagicPath = (fileContent, customPath = ".") => fileContent.replace(MAGIC_PATH_REGEX, customPath)
-
 const libStylePlugin = (options = {}) => {
-  const {customPath, customCSSPath, customCSSInjectedPath, loaders, include, exclude, importCSS = true, sassOptions = {}, ...postCssOptions} = options
+  const {customCSSPath, loaders, include, exclude, importCSS = true, sourceMap = true, sassOptions = {}, ...postCssOptions} = options
+
   const allLoaders = [...(loaders || []), ...defaultLoaders]
   const filter = createFilter(include, exclude)
-  const getLoader = (filepath) => allLoaders.find((loader) => loader.regex.test(filepath))
+  const getLoader = (filepath) => allLoaders.find((loader) => filepath.match(loader.regex))
+  let sourceMapOptions = sourceMap !== false ? {inline: true, sourcesContent: true, annotation: true, ...(sourceMap === true ? {} : sourceMap)} : false
+  const state = {
+    stylesheets: {},
+  }
 
   return {
     name: PLUGIN_NAME,
 
-    options(options) {
+    outputOptions(options) {
       if (!options.output) console.error("missing output options")
       else options.output.forEach((outputOptions) => outputPaths.push(outputOptions.dir))
     },
@@ -50,56 +45,86 @@ const libStylePlugin = (options = {}) => {
       modulesIds.add(id)
 
       const rawCss = await loader.process({filePath: id, code, options: {sassOptions}})
+      const codeOrStr = typeof rawCss === "string" ? code : rawCss.code
 
-      const postCssResult = await postCssTransformer({code: rawCss.code, fiePath: id, options: postCssOptions})
+      if (sourceMapOptions !== false) {
+        if (sourceMapOptions.sourcesContent) {
+          sourceMapOptions.prev = this.getCombinedSourcemap()
+        }
+        // It's easier to do that, than to ensure correct path gets generated
+        if (!sourceMapOptions.inline) {
+          sourceMapOptions.annotation = false
+        }
 
-      for (const dependency of postCssResult.dependencies) this.addWatchFile(dependency)
+        postCssOptions.map = sourceMapOptions
+      }
 
       const getFilePath = () => {
         return id.replace(process.cwd(), "").replace(/\\/g, "/")
       }
 
       const cssFilePath = customCSSPath ? customCSSPath(id) : getFilePath()
-      const cssFileInjectedPath = customCSSInjectedPath ? customCSSInjectedPath(cssFilePath) : cssFilePath
       const cssFilePathWithoutSlash = cssFilePath.startsWith("/") ? cssFilePath.substring(1) : cssFilePath
+      const stylesFileFilename = cssFilePathWithoutSlash.replace(loader.regex, ".css")
+      const targetPath = "dist/" + stylesFileFilename
+
+      const postCssResult = await postCssTransformer({code: codeOrStr, filePath: id, targetPath, options: postCssOptions})
+
+      for (const dependency of postCssResult.dependencies) this.addWatchFile(dependency)
 
       // create a new css file with the generated hash class names
-      this.emitFile({
-        type: "asset",
-        fileName: cssFilePathWithoutSlash.replace(loader.regex, ".css"),
-        source: postCssResult.extracted.code,
-      })
+      state.stylesheets[id] = {
+        sourceId: id,
+        targetPath: stylesFileFilename,
+        result: postCssResult,
+      }
 
-      const importStr = importCSS ? `import "${MAGIC_PATH}${cssFileInjectedPath.replace(loader.regex, ".css")}";\n` : ""
+      const importStr = importCSS ? `import "${MAGIC_PATH}${id}";\n` : ""
 
-      // create a new js file with css module
       return {
         code: importStr + postCssResult.code,
         map: {mappings: ""},
       }
     },
 
-    async closeBundle() {
-      if (!importCSS) return
+    generateBundle(outputOptions, bundle) {
+      const {dir, preserveModulesRoot} = outputOptions;
 
-      // get all the modules that import CSS files
-      const importersPaths = outputPaths
-        .reduce((result, currentPath) => {
-          result.push(glob.sync(`${currentPath}/**/*.js`))
-          return result
-        }, [])
-        .flat()
+      for (const id in state.stylesheets) {
+        const stylesheet = state.stylesheets[id]
+        const result = stylesheet.result
 
-      // replace magic path with relative path
-      await Promise.all(
-        importersPaths.map((currentPath) =>
-          fs
-            .readFile(currentPath)
-            .then((buffer) => buffer.toString())
-            .then((fileContent) => replaceMagicPath(fileContent, customPath))
-            .then((fileContent) => fs.writeFile(currentPath, fileContent))
-        )
-      )
+        const sourceMap = result.extracted.map
+        const sourceMapJson = sourceMap.toJSON()
+        const mapFileName = stylesheet.targetPath + ".map"
+        const map = mm(sourceMapJson).relative(Path.join(dir, Path.dirname(mapFileName)))
+
+        const mapFileId = this.emitFile({
+          type: "asset",
+          fileName: mapFileName,
+          source: map.toString(),
+        })
+
+        const cssFileId = this.emitFile({
+          type: "asset",
+          fileName: stylesheet.targetPath,
+          originalFileName: id,
+        })
+
+        const importer = bundle[Path.relative(preserveModulesRoot, id) + ".js"]
+
+        const cssPath = Path.join(dir, this.getFileName(cssFileId))
+        const mapPath = Path.join(dir, this.getFileName(mapFileId))
+        const mappingPath = Path.relative(Path.dirname(cssPath), mapPath);
+        const importPath = Path.relative(Path.dirname(Path.join(dir, importer.fileName)), cssPath);
+
+        let cssCode = result.extracted.css
+
+        cssCode += `\n/*# sourceMappingURL=${mappingPath}*/\n`
+        importer.code = importer.code.replace(`import '@@_MAGIC_PATH_@@${id}'`, `import './${importPath}'`)
+
+        this.setAssetSource(cssFileId, cssCode)
+      }
     },
   }
 }
