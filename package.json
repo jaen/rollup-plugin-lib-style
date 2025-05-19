@@ -66,6 +66,7 @@
     "postcss": "8.4.39",
     "postcss-modules": "4.0.0",
     "rollup-pluginutils": "2.8.2",
-    "sass": "1.55.0"
+    "sass": "1.55.0",
+    "source-map-js": "^1.2.1"
   }
 }
